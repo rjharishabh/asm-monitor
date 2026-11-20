@@ -45,7 +45,7 @@ INSTALLED_APPS = [
 UNFOLD = {
     "SITE_TITLE": "ASM Monitor",
     "SITE_HEADER": "Attack-Surface Monitor",
-    "SITE_SUBHEADER": "PS-011 Inventory & Change Detection",
+    "SITE_SUBHEADER": "Asset Discovery & Change Tracking",
     "SIDEBAR": {
         "show_search": True,
         "navigation": [
@@ -78,7 +78,7 @@ UNFOLD = {
                 "title": "Monitoring",
                 "items": [
                     {
-                        "title": "Change Alerts",
+                        "title": "Security Alerts",
                         "icon": "notifications_active",
                         "link": reverse_lazy("admin:asm_changealert_changelist"),
                         "badge": "asm.admin.open_alerts_badge",

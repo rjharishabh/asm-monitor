@@ -27,8 +27,7 @@ DANGLING_SUFFIXES = (
 )
 
 
-def is_ip_address(value: str) -> bool:
-    """Return True if value is a valid IPv4 or IPv6 address."""
+def is_ip_value(value: str) -> bool:
     try:
         ipaddress.ip_address((value or "").strip())
         return True
@@ -36,8 +35,17 @@ def is_ip_address(value: str) -> bool:
         return False
 
 
+def sync_target_type(target: Target) -> str:
+    """Detect IP vs DOMAIN purely from target.target_value and save target_type."""
+    val = (target.target_value or "").strip()
+    detected = "IP" if is_ip_value(val) else "DOMAIN"
+    if target.target_type != detected:
+        target.target_type = detected
+        target.save(update_fields=["target_type"])
+    return detected
+
+
 def _create_alert(target: Target, asset: Asset | None, alert_type: str, message: str):
-    """Create a ChangeAlert entry unless suppressed as a false positive."""
     if ChangeAlert.objects.filter(
         target=target,
         asset=asset,
@@ -55,12 +63,13 @@ def _create_alert(target: Target, asset: Asset | None, alert_type: str, message:
 
 
 def scan_whois(target: Target):
-    """Fetch WHOIS details for a domain target (skipped for direct IP targets)."""
-    if is_ip_address(target.domain):
+    """Run WHOIS only when target is a DOMAIN."""
+    if sync_target_type(target) == "IP":
         return
 
+    domain = target.target_value.strip().lower()
     try:
-        info = whois.whois(target.domain)
+        info = whois.whois(domain)
         expiry = info.expiration_date
         if isinstance(expiry, list):
             expiry = expiry[0]
@@ -73,7 +82,7 @@ def scan_whois(target: Target):
                     target,
                     None,
                     "DOMAIN_EXPIRY",
-                    f"Domain {target.domain} expires on {expiry.date()}",
+                    f"Domain {domain} expires on {expiry.date()}",
                 )
 
         target.registrar = str(info.registrar or "")[:255]
@@ -86,36 +95,27 @@ def scan_whois(target: Target):
 
 
 def enumerate_subdomains(target: Target) -> list[Asset]:
-    """Enumerate subdomains for a domain target, or create a single IP asset for an IP target."""
+    """If target is IP -> single IP asset (no subdomain alerts). If DOMAIN -> enumerate subdomains."""
     if not target.is_active:
         return []
 
-    # Case 1: Target itself is an IP address (or ip_address is set without a domain name)
-    raw_target = (target.domain or "").strip()
-    if is_ip_address(raw_target):
-        target.ip_address = raw_target
-        target.save(update_fields=["ip_address"])
+    t_type = sync_target_type(target)
+    raw = target.target_value.strip()
+
+    if t_type == "IP":
         asset, _ = Asset.objects.get_or_create(
             target=target,
-            hostname=raw_target,
-            defaults={"ip_address": raw_target},
+            hostname=raw,
+            defaults={"ip_address": raw},
         )
-        if asset.ip_address != raw_target:
-            asset.ip_address = raw_target
+        if asset.ip_address != raw:
+            asset.ip_address = raw
             asset.save(update_fields=["ip_address"])
         return [asset]
 
-    # Case 2: Target is a domain
-    discovered = {raw_target.lower()}
-    if target.ip_address:
-        asset, _ = Asset.objects.get_or_create(
-            target=target,
-            hostname=target.ip_address,
-            defaults={"ip_address": target.ip_address},
-        )
-        discovered.add(asset.hostname)
+    domain = raw.lower()
+    discovered = {domain}
 
-    domain = raw_target.lower()
     try:
         url = f"https://crt.sh/?q=%25.{domain}&output=json"
         req = Request(url, headers={"User-Agent": "ASM-Scanner/1.0"})
@@ -141,21 +141,22 @@ def enumerate_subdomains(target: Target) -> list[Asset]:
 
     assets = []
     for host in sorted(discovered):
+        if is_ip_value(host):
+            continue
         asset, created = Asset.objects.get_or_create(target=target, hostname=host)
         if created:
             _create_alert(target, asset, "SUBDOMAIN", f"New subdomain discovered: {host}")
         assets.append(asset)
     return assets
 
-
 def scan_dns(asset: Asset) -> list[dict]:
-    """Populate DNSRecord table for an asset (PTR for IP, A/AAAA/CNAME/MX/TXT/NS for domain)."""
+    """PTR lookup for IP assets; A/AAAA/CNAME/MX/TXT/NS for domain assets."""
     DNSRecord.objects.filter(asset=asset).delete()
     resolver = dns.resolver.Resolver()
     resolver.lifetime = 3.0
     records = []
 
-    if is_ip_address(asset.hostname):
+    if is_ip_value(asset.hostname):
         asset.ip_address = asset.hostname
         asset.is_alive = True
         asset.save(update_fields=["ip_address", "is_alive"])
@@ -208,7 +209,6 @@ def scan_dns(asset: Asset) -> list[dict]:
 
 
 def _inspect_tls(hostname: str, port: int) -> tuple[str, datetime | None]:
-    """Retrieve TLS certificate issuer and expiration timestamp."""
     ctx = ssl.create_default_context()
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE
@@ -226,7 +226,6 @@ def _inspect_tls(hostname: str, port: int) -> tuple[str, datetime | None]:
 
 
 def scan_ports(asset: Asset, ports: list[int] | None = None) -> list[dict]:
-    """Populate ServicePort (open ports + TLS) table and create ChangeAlert entries."""
     ports = ports or COMMON_PORTS
     host = asset.ip_address or asset.hostname
     previous_ports = set(ServicePort.objects.filter(asset=asset).values_list("port", flat=True))
@@ -293,7 +292,6 @@ def scan_ports(asset: Asset, ports: list[int] | None = None) -> list[dict]:
 
 
 def scan_asset_recursive(asset: Asset) -> dict:
-    """Run DNS + Port/TLS scan on a single asset and fill DB tables."""
     dns_records = scan_dns(asset)
     open_ports = scan_ports(asset)
     return {
@@ -305,26 +303,24 @@ def scan_asset_recursive(asset: Asset) -> dict:
 
 
 def scan_target_recursive(target: Target) -> dict:
-    """
-    Only runs if target.is_active is True:
-    1. Target scan (WHOIS if domain, IP detection)
-    2. Enumerate subdomains / assets
-    3. For each asset/subdomain, run DNS + port/TLS scan -> fill DB tables -> create alerts
-    """
     if not target.is_active:
         return {
-            "target": target.domain,
+            "target": target.target_value,
             "skipped": True,
             "reason": "Target is_active is False",
             "assets_scanned": 0,
             "results": [],
         }
 
-    scan_whois(target)
+    t_type = sync_target_type(target)
+    if t_type == "DOMAIN":
+        scan_whois(target)
+
     assets = enumerate_subdomains(target)
     results = [scan_asset_recursive(asset) for asset in assets]
     return {
-        "target": target.domain,
+        "target": target.target_value,
+        "target_type": t_type,
         "skipped": False,
         "assets_scanned": len(results),
         "results": results,

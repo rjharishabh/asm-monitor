@@ -3,12 +3,20 @@ from unfold.admin import ModelAdmin
 from unfold.decorators import display
 
 from .models import Asset, ChangeAlert, DNSRecord, ServicePort, Target
-from .scanner import scan_asset_recursive, scan_target_recursive
+from .scanner import scan_asset_recursive, scan_target_recursive, sync_target_type
 
 
 def open_alerts_badge(request):
     count = ChangeAlert.objects.filter(is_false_positive=False).count()
     return count if count > 0 else None
+
+
+@admin.action(description="Toggle Active / Inactive on selected targets")
+def toggle_target_active(modeladmin, request, queryset):
+    for target in queryset:
+        target.is_active = not target.is_active
+        target.save(update_fields=["is_active"])
+    messages.success(request, f"Toggled active status on {queryset.count()} target(s).")
 
 
 @admin.action(description="Run scan on active selected targets")
@@ -59,12 +67,16 @@ def mark_false_positive(modeladmin, request, queryset):
 
 @admin.register(Target)
 class TargetAdmin(ModelAdmin):
-    list_display = ("domain", "ip_address", "is_active", "registrar", "whois_expiry", "created_at")
-    list_filter = ("is_active",)
-    search_fields = ("domain", "ip_address", "registrar")
-    fields = ("domain", "ip_address", "is_active", "registrar", "whois_expiry", "nameservers", "created_at")
-    readonly_fields = ("registrar", "whois_expiry", "nameservers", "created_at")
-    actions = [run_target_scan]
+    list_display = ("target_value", "target_type", "is_active", "registrar", "whois_expiry", "created_at")
+    list_filter = ("target_type", "is_active")
+    search_fields = ("target_value", "registrar")
+    fields = ("target_value", "is_active", "target_type", "registrar", "whois_expiry", "nameservers", "created_at")
+    readonly_fields = ("target_type", "registrar", "whois_expiry", "nameservers", "created_at")
+    actions = [run_target_scan, toggle_target_active]
+
+    def save_model(self, request, obj, form, change):
+        super().save_model(request, obj, form, change)
+        sync_target_type(obj)
 
 
 @admin.register(Asset)
@@ -73,6 +85,15 @@ class AssetAdmin(ModelAdmin):
     list_filter = ("target", "is_alive")
     search_fields = ("hostname", "ip_address")
     actions = [run_asset_scan]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
 
     @display(description="Status", ordering="is_alive", label={"true": "success", "false": "danger"})
     def alive_badge(self, obj):
@@ -84,8 +105,16 @@ class DNSRecordAdmin(ModelAdmin):
     list_display = ("asset", "record_type", "value", "dangling_badge")
     list_filter = ("record_type", "is_dangling")
     search_fields = ("asset__hostname", "value")
-    fields = ("asset", "record_type", "value", "is_dangling")
     actions = [toggle_dangling]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
 
     @display(description="Dangling", ordering="is_dangling", label={"true": "danger", "false": "success"})
     def dangling_badge(self, obj):
@@ -98,6 +127,15 @@ class ServicePortAdmin(ModelAdmin):
     list_filter = ("port", "service")
     search_fields = ("asset__hostname", "tls_issuer")
 
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
 
 @admin.register(ChangeAlert)
 class ChangeAlertAdmin(ModelAdmin):
@@ -105,6 +143,15 @@ class ChangeAlertAdmin(ModelAdmin):
     list_filter = ("alert_type", "is_false_positive", "target")
     search_fields = ("message", "asset__hostname")
     actions = [mark_false_positive]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
 
     @display(
         description="Type",

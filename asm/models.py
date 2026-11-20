@@ -2,8 +2,8 @@ from django.db import models
 
 
 class Target(models.Model):
-    domain = models.CharField(max_length=255, unique=True)
-    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    target_value = models.CharField(max_length=255, unique=True, help_text="Enter a domain or an IP address")
+    target_type = models.CharField(max_length=16, blank=True, default="DOMAIN")  # DOMAIN or IP
     is_active = models.BooleanField(default=True)
     registrar = models.CharField(max_length=255, blank=True, default="")
     whois_expiry = models.DateTimeField(null=True, blank=True)
@@ -11,7 +11,7 @@ class Target(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
-        return self.domain
+        return self.target_value
 
 
 class Asset(models.Model):
@@ -30,7 +30,7 @@ class Asset(models.Model):
 
 class DNSRecord(models.Model):
     asset = models.ForeignKey(Asset, on_delete=models.CASCADE, related_name="dns_records")
-    record_type = models.CharField(max_length=16)  # A, AAAA, CNAME, MX, TXT, NS
+    record_type = models.CharField(max_length=16)  # A, AAAA, CNAME, MX, TXT, NS, PTR
     value = models.TextField()
     is_dangling = models.BooleanField(default=False)
 
@@ -63,6 +63,10 @@ class ChangeAlert(models.Model):
     message = models.CharField(max_length=255)
     is_false_positive = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        verbose_name = "Security Alert"
+        verbose_name_plural = "Security Alerts"
 
     def __str__(self):
         return f"[{self.alert_type}] {self.message}"

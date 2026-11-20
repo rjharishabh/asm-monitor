@@ -9,8 +9,10 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         active_targets = Target.objects.filter(is_active=True)
         for target in active_targets:
-            self.stdout.write(f"Scanning active target {target.domain}...")
+            self.stdout.write(f"Scanning active target {target.target_value}...")
             res = scan_target_recursive(target)
             self.stdout.write(
-                self.style.SUCCESS(f"Completed {target.domain} ({res['assets_scanned']} assets)")
+                self.style.SUCCESS(
+                    f"Completed {target.target_value} ({res['assets_scanned']} assets)"
+                )
             )
