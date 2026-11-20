@@ -11,6 +11,7 @@ https://docs.djangoproject.com/en/6.1/ref/settings/
 """
 
 from pathlib import Path
+from django.urls import reverse_lazy
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -31,6 +32,7 @@ ALLOWED_HOSTS = []
 # Application definition
 
 INSTALLED_APPS = [
+    "unfold",
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
@@ -39,6 +41,53 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     "asm",
 ]
+
+UNFOLD = {
+    "SITE_TITLE": "ASM Monitor",
+    "SITE_HEADER": "Attack-Surface Monitor",
+    "SITE_SUBHEADER": "PS-011 Inventory & Change Detection",
+    "SIDEBAR": {
+        "show_search": True,
+        "navigation": [
+            {
+                "title": "Inventory",
+                "items": [
+                    {
+                        "title": "Targets",
+                        "icon": "language",
+                        "link": reverse_lazy("admin:asm_target_changelist"),
+                    },
+                    {
+                        "title": "Assets / Subdomains",
+                        "icon": "dns",
+                        "link": reverse_lazy("admin:asm_asset_changelist"),
+                    },
+                    {
+                        "title": "DNS Records",
+                        "icon": "hub",
+                        "link": reverse_lazy("admin:asm_dnsrecord_changelist"),
+                    },
+                    {
+                        "title": "Open Ports & TLS",
+                        "icon": "security",
+                        "link": reverse_lazy("admin:asm_serviceport_changelist"),
+                    },
+                ],
+            },
+            {
+                "title": "Monitoring",
+                "items": [
+                    {
+                        "title": "Change Alerts",
+                        "icon": "notifications_active",
+                        "link": reverse_lazy("admin:asm_changealert_changelist"),
+                        "badge": "asm.admin.open_alerts_badge",
+                    },
+                ],
+            },
+        ],
+    },
+}
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",

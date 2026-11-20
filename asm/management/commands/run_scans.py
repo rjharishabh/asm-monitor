@@ -4,10 +4,13 @@ from asm.scanner import scan_target_recursive
 
 
 class Command(BaseCommand):
-    help = "Run scheduled attack-surface scans across all approved targets"
+    help = "Run scans across all active targets (is_active=True)"
 
     def handle(self, *args, **options):
-        for target in Target.objects.all():
-            self.stdout.write(f"Scanning {target.domain}...")
+        active_targets = Target.objects.filter(is_active=True)
+        for target in active_targets:
+            self.stdout.write(f"Scanning active target {target.domain}...")
             res = scan_target_recursive(target)
-            self.stdout.write(self.style.SUCCESS(f"Completed {target.domain} ({res['assets_scanned']} assets)"))
+            self.stdout.write(
+                self.style.SUCCESS(f"Completed {target.domain} ({res['assets_scanned']} assets)")
+            )

@@ -1,3 +1,4 @@
+import ipaddress
 import json
 import socket
 import ssl
@@ -5,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from urllib.request import Request, urlopen
 
 import dns.resolver
+import dns.reversename
 import whois
 from cryptography import x509
 from django.utils import timezone as dj_timezone
@@ -25,19 +27,38 @@ DANGLING_SUFFIXES = (
 )
 
 
+def is_ip_address(value: str) -> bool:
+    """Return True if value is a valid IPv4 or IPv6 address."""
+    try:
+        ipaddress.ip_address((value or "").strip())
+        return True
+    except ValueError:
+        return False
+
+
 def _create_alert(target: Target, asset: Asset | None, alert_type: str, message: str):
-    """Create alert unless an identical false-positive alert was already suppressed."""
+    """Create a ChangeAlert entry unless suppressed as a false positive."""
     if ChangeAlert.objects.filter(
-        target=target, asset=asset, alert_type=alert_type, message=message, is_false_positive=True
+        target=target,
+        asset=asset,
+        alert_type=alert_type,
+        message=message,
+        is_false_positive=True,
     ).exists():
         return
     ChangeAlert.objects.get_or_create(
-        target=target, asset=asset, alert_type=alert_type, message=message
+        target=target,
+        asset=asset,
+        alert_type=alert_type,
+        message=message,
     )
 
 
 def scan_whois(target: Target):
-    """Fetch WHOIS registrar, nameservers, and expiry date for a target domain."""
+    """Fetch WHOIS details for a domain target (skipped for direct IP targets)."""
+    if is_ip_address(target.domain):
+        return
+
     try:
         info = whois.whois(target.domain)
         expiry = info.expiration_date
@@ -49,8 +70,10 @@ def scan_whois(target: Target):
             target.whois_expiry = expiry
             if expiry <= datetime.now(timezone.utc) + timedelta(days=30):
                 _create_alert(
-                    target, None, "DOMAIN_EXPIRY",
-                    f"Domain {target.domain} expires on {expiry.date()}"
+                    target,
+                    None,
+                    "DOMAIN_EXPIRY",
+                    f"Domain {target.domain} expires on {expiry.date()}",
                 )
 
         target.registrar = str(info.registrar or "")[:255]
@@ -63,18 +86,45 @@ def scan_whois(target: Target):
 
 
 def enumerate_subdomains(target: Target) -> list[Asset]:
-    """Enumerate subdomains via Certificate Transparency (crt.sh) + common wordlist."""
-    discovered = {target.domain}
+    """Enumerate subdomains for a domain target, or create a single IP asset for an IP target."""
+    if not target.is_active:
+        return []
 
+    # Case 1: Target itself is an IP address (or ip_address is set without a domain name)
+    raw_target = (target.domain or "").strip()
+    if is_ip_address(raw_target):
+        target.ip_address = raw_target
+        target.save(update_fields=["ip_address"])
+        asset, _ = Asset.objects.get_or_create(
+            target=target,
+            hostname=raw_target,
+            defaults={"ip_address": raw_target},
+        )
+        if asset.ip_address != raw_target:
+            asset.ip_address = raw_target
+            asset.save(update_fields=["ip_address"])
+        return [asset]
+
+    # Case 2: Target is a domain
+    discovered = {raw_target.lower()}
+    if target.ip_address:
+        asset, _ = Asset.objects.get_or_create(
+            target=target,
+            hostname=target.ip_address,
+            defaults={"ip_address": target.ip_address},
+        )
+        discovered.add(asset.hostname)
+
+    domain = raw_target.lower()
     try:
-        url = f"https://crt.sh/?q=%25.{target.domain}&output=json"
+        url = f"https://crt.sh/?q=%25.{domain}&output=json"
         req = Request(url, headers={"User-Agent": "ASM-Scanner/1.0"})
         with urlopen(req, timeout=8) as resp:
             rows = json.loads(resp.read().decode("utf-8", errors="ignore"))
             for row in rows:
                 for name in str(row.get("name_value", "")).splitlines():
                     name = name.strip().lower().lstrip("*.")
-                    if name == target.domain or name.endswith(f".{target.domain}"):
+                    if name == domain or name.endswith(f".{domain}"):
                         discovered.add(name)
     except Exception:
         pass
@@ -82,7 +132,7 @@ def enumerate_subdomains(target: Target) -> list[Asset]:
     resolver = dns.resolver.Resolver()
     resolver.lifetime = 2.0
     for sub in COMMON_SUBDOMAINS:
-        candidate = f"{sub}.{target.domain}"
+        candidate = f"{sub}.{domain}"
         try:
             resolver.resolve(candidate, "A")
             discovered.add(candidate)
@@ -99,11 +149,27 @@ def enumerate_subdomains(target: Target) -> list[Asset]:
 
 
 def scan_dns(asset: Asset) -> list[dict]:
-    """Query DNS records (A, AAAA, CNAME, MX, TXT, NS) and detect dangling CNAMEs."""
+    """Populate DNSRecord table for an asset (PTR for IP, A/AAAA/CNAME/MX/TXT/NS for domain)."""
     DNSRecord.objects.filter(asset=asset).delete()
     resolver = dns.resolver.Resolver()
     resolver.lifetime = 3.0
     records = []
+
+    if is_ip_address(asset.hostname):
+        asset.ip_address = asset.hostname
+        asset.is_alive = True
+        asset.save(update_fields=["ip_address", "is_alive"])
+        try:
+            rev_name = dns.reversename.from_address(asset.hostname)
+            for ans in resolver.resolve(rev_name, "PTR"):
+                val = ans.to_text().strip(".")
+                DNSRecord.objects.create(
+                    asset=asset, record_type="PTR", value=val, is_dangling=False
+                )
+                records.append({"type": "PTR", "value": val, "dangling": False})
+        except Exception:
+            pass
+        return records
 
     try:
         ip = resolver.resolve(asset.hostname, "A")[0].to_text()
@@ -125,8 +191,10 @@ def scan_dns(asset: Asset) -> list[dict]:
                     except Exception:
                         dangling = True
                         _create_alert(
-                            asset.target, asset, "DANGLING_DNS",
-                            f"Dangling CNAME on {asset.hostname} -> {val}"
+                            asset.target,
+                            asset,
+                            "DANGLING_DNS",
+                            f"Dangling CNAME on {asset.hostname} -> {val}",
                         )
 
                 DNSRecord.objects.create(
@@ -158,7 +226,7 @@ def _inspect_tls(hostname: str, port: int) -> tuple[str, datetime | None]:
 
 
 def scan_ports(asset: Asset, ports: list[int] | None = None) -> list[dict]:
-    """Scan TCP ports, inspect TLS certificates, and alert on port/cert changes."""
+    """Populate ServicePort (open ports + TLS) table and create ChangeAlert entries."""
     ports = ports or COMMON_PORTS
     host = asset.ip_address or asset.hostname
     previous_ports = set(ServicePort.objects.filter(asset=asset).values_list("port", flat=True))
@@ -195,22 +263,28 @@ def scan_ports(asset: Asset, ports: list[int] | None = None) -> list[dict]:
 
                 if port not in previous_ports:
                     _create_alert(
-                        asset.target, asset, "PORT_CHANGE",
-                        f"New open port {port}/{service} exposed on {asset.hostname}"
+                        asset.target,
+                        asset,
+                        "PORT_CHANGE",
+                        f"New open port {port}/{service} exposed on {asset.hostname}",
                     )
 
                 if expiry and expiry <= datetime.now(timezone.utc) + timedelta(days=14):
                     _create_alert(
-                        asset.target, asset, "TLS_EXPIRY",
-                        f"TLS cert on {asset.hostname}:{port} expires {expiry.date()}"
+                        asset.target,
+                        asset,
+                        "TLS_EXPIRY",
+                        f"TLS cert on {asset.hostname}:{port} expires {expiry.date()}",
                     )
         except Exception:
             continue
 
     for closed_port in previous_ports - current_ports:
         _create_alert(
-            asset.target, asset, "PORT_CHANGE",
-            f"Previously open port {closed_port} closed on {asset.hostname}"
+            asset.target,
+            asset,
+            "PORT_CHANGE",
+            f"Previously open port {closed_port} closed on {asset.hostname}",
         )
 
     asset.last_scanned = dj_timezone.now()
@@ -219,7 +293,7 @@ def scan_ports(asset: Asset, ports: list[int] | None = None) -> list[dict]:
 
 
 def scan_asset_recursive(asset: Asset) -> dict:
-    """Scan DNS records and open ports/TLS for a single asset."""
+    """Run DNS + Port/TLS scan on a single asset and fill DB tables."""
     dns_records = scan_dns(asset)
     open_ports = scan_ports(asset)
     return {
@@ -231,12 +305,27 @@ def scan_asset_recursive(asset: Asset) -> dict:
 
 
 def scan_target_recursive(target: Target) -> dict:
-    """Run WHOIS, enumerate subdomains, and recursively scan every asset."""
+    """
+    Only runs if target.is_active is True:
+    1. Target scan (WHOIS if domain, IP detection)
+    2. Enumerate subdomains / assets
+    3. For each asset/subdomain, run DNS + port/TLS scan -> fill DB tables -> create alerts
+    """
+    if not target.is_active:
+        return {
+            "target": target.domain,
+            "skipped": True,
+            "reason": "Target is_active is False",
+            "assets_scanned": 0,
+            "results": [],
+        }
+
     scan_whois(target)
     assets = enumerate_subdomains(target)
     results = [scan_asset_recursive(asset) for asset in assets]
     return {
         "target": target.domain,
+        "skipped": False,
         "assets_scanned": len(results),
         "results": results,
     }

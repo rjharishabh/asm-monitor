@@ -3,6 +3,8 @@ from django.db import models
 
 class Target(models.Model):
     domain = models.CharField(max_length=255, unique=True)
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    is_active = models.BooleanField(default=True)
     registrar = models.CharField(max_length=255, blank=True, default="")
     whois_expiry = models.DateTimeField(null=True, blank=True)
     nameservers = models.TextField(blank=True, default="")
