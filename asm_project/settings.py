@@ -40,6 +40,7 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
+    "django_crontab",
     "asm",
 ]
 
@@ -184,3 +185,7 @@ MAILERS = {
         "BACKEND": "django.core.mail.backends.console.EmailBackend",
     },
 }
+
+CRONJOBS = [
+    ("0 */12 * * *", "django.core.management.call_command", ["run_scans"], {}, ">> scan.log 2>&1"),
+]
