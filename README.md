@@ -111,15 +111,14 @@ python manage.py runserver
 ### 4. Manage False Positives:
 - In `/admin/asm/changealert/`, open any expected or benign alert and mark `is_false_positive = True` so future scans suppress repeat alerts for that finding.
 ---
-## 6. Setting Up Automated Periodic Scans
-#### Option A: `django-crontab` (Linux / macOS)
-##### 1. Ensure `"django_crontab"` is in `INSTALLED_APPS` in `asm_project/settings.py`:
+## 6. Setting Up Automated Periodic Scans - `django-crontab` (Linux / macOS)
+#### 1. Ensure `"django_crontab"` is in `INSTALLED_APPS` in `asm_project/settings.py`:
 ```python
    CRONJOBS = [
        ("0 */12 * * *", "django.core.management.call_command", ["run_scans"], {}, ">> scan.log 2>&1"),
    ]
    ```
-##### 2. Register the cron job:
+#### 2. Register the cron job:
 ```bash
    python manage.py crontab add
    python manage.py crontab show
