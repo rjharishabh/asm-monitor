@@ -17,10 +17,12 @@ Including another URLconf
 
 from django.contrib import admin
 from django.urls import path
+from asm.views import index
 from asm import api
 
 urlpatterns = [
     path("admin/", admin.site.urls),
+    path("", index, name="index"),
     path("api/scan/subdomains/", api.api_subdomains, name="api_scan_subdomains"),
     path("api/scan/dns/", api.api_dns, name="api_scan_dns"),
     path("api/scan/ports/", api.api_ports, name="api_scan_ports"),

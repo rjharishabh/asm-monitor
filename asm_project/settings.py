@@ -12,6 +12,7 @@ https://docs.djangoproject.com/en/6.1/ref/settings/
 
 from pathlib import Path
 from django.urls import reverse_lazy
+from django.templatetags.static import static
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -87,6 +88,14 @@ UNFOLD = {
             },
         ],
     },
+    "SITE_FAVICONS": [
+        {
+            "rel": "icon",
+            "sizes": "32x32",
+            "type": "image/x-icon",
+            "href": lambda request: static("asm/favicon.png"),
+        },
+    ],
 }
 
 MIDDLEWARE = [

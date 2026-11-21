@@ -14,8 +14,15 @@ from django.utils import timezone as dj_timezone
 from .models import Asset, ChangeAlert, DNSRecord, ServicePort, Target
 
 COMMON_SUBDOMAINS = [
-    "www", "api", "dev", "staging", "test", "admin", "mail", "portal", "app", "vpn"
+    "www", "mail", "webmail", "smtp", "imap", "pop", "mx", "portal", "login", "sso", "auth", "id", "account", 
+    "accounts", "academic", "acad", "admissions", "exam", "exams", "result", "results", "library", "lib", "erp", 
+    "mis", "student", "students", "faculty", "staff", "hr", " intranet", "intranet", "vpn", "wifi", "eduroam", 
+    "cloud", "drive", "nextcloud", "git", "gitlab", "github", "api", "dev", "staging", "stage", "test", "uat", 
+    "demo", "admin", "cpanel", "webdisk", "ns1", "ns2", "dns", "ftp", "sftp", "shop", "store", "pay", "payment", 
+    "payments", "alumni", "careers", "events", "conference", "conferences", "news", "blog", "media", "research", 
+    "labs", "lab", "hpc", "compute", "cluster", "status"
 ]
+
 COMMON_PORTS = [21, 22, 25, 53, 80, 443, 3306, 5432, 8080, 8443]
 DANGLING_SUFFIXES = (
     ".azurewebsites.net",
@@ -26,6 +33,27 @@ DANGLING_SUFFIXES = (
     ".myshopify.com",
 )
 
+KNOWN_SERVICES = {
+    21: "ftp",
+    22: "ssh",
+    25: "smtp",
+    53: "domain",
+    80: "http",
+    443: "https",
+    3306: "mysql",
+    5432: "postgresql",
+    8080: "http-alt",
+    8443: "https-alt",
+}
+
+
+def resolve_service_name(port: int, proto: str = "tcp") -> str:
+    if port in KNOWN_SERVICES:
+        return KNOWN_SERVICES[port]
+    try:
+        return socket.getservbyport(port, proto)
+    except OSError:
+        return "unknown"
 
 def is_ip_value(value: str) -> bool:
     try:
@@ -133,18 +161,20 @@ def enumerate_subdomains(target: Target) -> list[Asset]:
     resolver.lifetime = 2.0
     for sub in COMMON_SUBDOMAINS:
         candidate = f"{sub}.{domain}"
-        try:
-            resolver.resolve(candidate, "A")
-            discovered.add(candidate)
-        except Exception:
-            continue
+        for rtype in ("A", "CNAME"):
+            try:
+                resolver.resolve(candidate, rtype)
+                discovered.add(candidate)
+                break
+            except Exception:
+                continue
 
     assets = []
     for host in sorted(discovered):
         if is_ip_value(host):
             continue
         asset, created = Asset.objects.get_or_create(target=target, hostname=host)
-        if created:
+        if created and host != domain:
             _create_alert(target, asset, "SUBDOMAIN", f"New subdomain discovered: {host}")
         assets.append(asset)
     return assets
@@ -239,7 +269,7 @@ def scan_ports(asset: Asset, ports: list[int] | None = None) -> list[dict]:
             with socket.create_connection((host, port), timeout=1.5):
                 current_ports.add(port)
                 try:
-                    service = socket.getservbyport(port, "tcp")
+                    service = resolve_service_name(port, "tcp")
                 except OSError:
                     service = "unknown"
 

@@ -69,7 +69,7 @@ def mark_false_positive(modeladmin, request, queryset):
 class TargetAdmin(ModelAdmin):
     list_display = ("target_value", "target_type", "is_active", "registrar", "whois_expiry", "created_at")
     list_filter = ("target_type", "is_active")
-    search_fields = ("target_value", "registrar")
+    search_fields = ("target_value", "target_type", "registrar", "whois_expiry", "created_at")
     fields = ("target_value", "is_active", "target_type", "registrar", "whois_expiry", "nameservers", "created_at")
     readonly_fields = ("target_type", "registrar", "whois_expiry", "nameservers", "created_at")
     actions = [run_target_scan, toggle_target_active]
@@ -83,7 +83,7 @@ class TargetAdmin(ModelAdmin):
 class AssetAdmin(ModelAdmin):
     list_display = ("hostname", "target", "ip_address", "alive_badge", "last_scanned")
     list_filter = ("target", "is_alive")
-    search_fields = ("hostname", "ip_address")
+    search_fields = ("hostname", "target", "ip_address", "last_scanned")
     actions = [run_asset_scan]
 
     def has_add_permission(self, request):
@@ -104,7 +104,7 @@ class AssetAdmin(ModelAdmin):
 class DNSRecordAdmin(ModelAdmin):
     list_display = ("asset", "record_type", "value", "dangling_badge")
     list_filter = ("record_type", "is_dangling")
-    search_fields = ("asset__hostname", "value")
+    search_fields = ("asset__hostname", "record_type", "value")
     actions = [toggle_dangling]
 
     def has_add_permission(self, request):
@@ -125,7 +125,7 @@ class DNSRecordAdmin(ModelAdmin):
 class ServicePortAdmin(ModelAdmin):
     list_display = ("asset", "port", "service", "tls_issuer", "tls_expiry")
     list_filter = ("port", "service")
-    search_fields = ("asset__hostname", "tls_issuer")
+    search_fields = ("asset__hostname", "port", "service", "tls_issuer")
 
     def has_add_permission(self, request):
         return False
