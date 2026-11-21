@@ -133,8 +133,12 @@ python manage.py runserver
 | `ServicePort` | Open TCP ports & resolved service names  | `asset`, `port`, `service`                                                    |
 | `ChangeAlert` | Drift & exposure alerts                  | `target`, `asset`, `alert_type`, `message`, `is_false_positive`, `created_at` |
 ---
-## 8. Troubleshooting & Notes
-- TCP-Only Port Scanning: The scanner probes TCP ports using `socket.SOCK_STREAM`. Common non-standard ports (such as `3306` and `8080`) are mapped via `KNOWN_SERVICES` in `asm/scanner.py`.
-- Large Domains & `crt.sh`: Large domains with many certificates may experience `crt.sh` timeouts or take longer during sequential port scanning.
-- Unimplemented Extension:
-	- TLS certificate expiry day-threshold alerts remain an unimplemented extension that flags certificates expiring within a configured number of days.
+
+### 8. Limitations & Operational Constraints
+- **TCP-Only & Curated Port/Service Mapping:** Scanning uses TCP sockets (`SOCK_STREAM`) with `KNOWN_SERVICES` fallbacks (such as `3306` and `8080`), rather than exhaustive port.
+- **Large Domains & `crt.sh`:** Domains with large certificate histories may hit `crt.sh` timeouts or longer runtimes during sequential scanning.
+
+### 9. Unimplemented Features & Future Scope
+- **Django REST Framework (DRF) Endpoints:** Serializers, viewsets/API views, and REST routes are not implemented.
+- **Automatic Dangling CNAME / DNS Detection:** Flagging dangling CNAME/DNS records automatically during scans is not implemented.
+- **UDP Port Scanning:** Port scanning is TCP-only (`SOCK_STREAM`); UDP (`SOCK_DGRAM`) scanning is not implemented.
