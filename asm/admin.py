@@ -83,7 +83,7 @@ class TargetAdmin(ModelAdmin):
 class AssetAdmin(ModelAdmin):
     list_display = ("hostname", "target", "ip_address", "alive_badge", "last_scanned")
     list_filter = ("target", "is_alive")
-    search_fields = ("hostname", "target", "ip_address", "last_scanned")
+    search_fields = ("hostname", "ip_address", "last_scanned")
     actions = [run_asset_scan]
 
     def has_add_permission(self, request):
